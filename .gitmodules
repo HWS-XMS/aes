@@ -1,0 +1,3 @@
+[submodule "leakage_assessment/verilator-sca"]
+	path = leakage_assessment/verilator-sca
+	url = git@github.com:HWS-XMS/verilator-sca.git

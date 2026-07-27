@@ -1,0 +1,43 @@
+# Simulation outputs
+*.vcd
+*.log
+*.wlf
+*.vpd
+*.fsdb
+
+# Compilation outputs
+a.out
+*.o
+*.so
+*.a
+simv
+simv.daidir/
+csrc/
+work/
+transcript
+vsim.wlf
+
+# Test outputs
+test_outputs/
+
+# Build directories and simulation binaries / captured data
+build/
+obj_dir/
+*.vvp
+*.exe
+*.h5
+
+# IDE and tool files
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Coverage files
+*.vdb
+coverage/
+urgReport/
+
+# Waveform files
+*.gtkw
