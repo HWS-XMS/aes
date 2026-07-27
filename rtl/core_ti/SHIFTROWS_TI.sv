@@ -1,7 +1,5 @@
 import AES_PKG::*;
-// SHIFTROWS_TI - ShiftRows is linear, so it is applied independently to each of
-// the N Boolean shares (a plain SHIFTROWS per share). Combinational.
-// Each share is a 128-bit state block.
+// SHIFTROWS_TI - ShiftRows applied share-wise (linear).  Combinational.
 module SHIFTROWS_TI #(
     parameter int N = 2
 )(
@@ -10,7 +8,7 @@ module SHIFTROWS_TI #(
 );
     genvar s;
     generate
-        for (s = 0; s < N; s++) begin : g_share
+        for (s = 0; s < N; s++) begin
             SHIFTROWS sr (
                 .state_in  (state_in [s*128 +: 128]),
                 .state_out (state_out[s*128 +: 128])

@@ -1,18 +1,11 @@
 import AES_PKG::*;
 import AES_TI_PKG::*;
-// ============================================================================
-// INVSBOX_TI - DOM-masked AES inverse S-box, N shares.
-//
-//   S^-1(y) = gf_inv( affine^-1(y) )   with  affine^-1(y) = inv_affine_lin(y) ^ 0x05
-//
-// Only the affine differs from SBOX_TI: here the (linear) inverse affine is
-// applied *before* the shared GF_INV_TI inversion, with constant 0x05 folded
-// into a single share.  Latency = GF_INV_TI latency (4 cycles).
-// ============================================================================
+// INVSBOX_TI - DOM/HPC1-masked AES inverse S-box, N shares:
+// S^-1(y) = (inv_affine(y) ^ 0x05)^254.  The inverse affine is linear (0x05 into
+// one share) and precedes the shared GF_INV_TI.  Latency = GF_INV_TI (8).
 module INVSBOX_TI #(
     parameter  int N    = 2,
-    localparam int RW   = N*(N-1)/2,
-    localparam int RALL = (RW*8*4 > 0) ? RW*8*4 : 1
+    localparam int RALL = sbox_rand_words(N)*8
 )(
     input  logic            clk,
     input  logic            rst,
@@ -26,12 +19,19 @@ module INVSBOX_TI #(
         end
     endfunction
 
-    logic [N*8-1:0] iaff, a;
+    logic [N*8-1:0] iaff;
+    logic [N*8-1:0] a;
     assign iaff = sw_inv_affine(x);
     always_comb begin
         a = iaff;
-        a[7:0] = iaff[7:0] ^ AES_INV_AFFINE_CONST;   // constant into share 0
+        a[7:0] = iaff[7:0] ^ AES_INV_AFFINE_CONST;
     end
 
-    GF_INV_TI #(N) ginv (.clk(clk), .rst(rst), .x(a), .rnd(rnd), .y(y));
+    GF_INV_TI #(N) ginv (
+        .clk (clk),
+        .rst (rst),
+        .x   (a  ),
+        .rnd (rnd),
+        .y   (y  )
+    );
 endmodule

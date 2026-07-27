@@ -1,101 +1,89 @@
 import AES_PKG::*;
 import AES_TI_PKG::*;
-// ============================================================================
-// AES_ENCRYPT_TI - DOM-masked AES encryption core, N shares (order d = N-1).
-//
-// Mirrors the unmasked AES_ENCRYPT: takes the (shared) key and expands it
-// internally with KEY_EXPANSION_TI.  Because the masked key schedule is a
-// multi-cycle pipeline, key setup uses the SAME valid-tracking idiom as the data
-// path (AES_ENCRYPT's valid_pipe/out_valid): key_valid is pushed into a shift
-// register the length of the schedule latency; when it pops we latch the settled
-// round-key shares and pulse key_ready.  Every key_valid re-keys independently -
-// no reset required.  key_ready high => rk_reg holds valid round keys.
-//
-//   Key setup latency : KEY_LATENCY cycles after key_valid  -> key_ready pulse
-//   Encryption latency: Nr*4 cycles after in_valid          -> out_valid
-//
-// Recombining (XOR) the N output shares yields the exact AES ciphertext.
-// ============================================================================
+// AES_ENCRYPT_TI - fully-unrolled DOM-masked encrypt datapath, runtime keysize.
+// Thirteen ROUND_TI stages (each 8 cycles); the size taps the share-state after
+// 9/11/13 rounds into one LASTROUND_TI.  Round keys are the N-share store; rnd is
+// fresh DOM randomness every cycle.  Latency = Nr*SBOX_LAT.
 module AES_ENCRYPT_TI #(
-    parameter  int N       = 2,
-    parameter  int KEYSIZE = 16,
-    localparam int Nk       = KEYSIZE / 4,
-    localparam int Nr       = Nk + 6,
-    localparam int NSUB     = (KEYSIZE == 16) ? 10 : (KEYSIZE == 24) ? 8 : 13,
-    localparam int RW       = N*(N-1)/2,
-    localparam int RPERR    = 16*4*RW*8,             // datapath randomness per round
-    localparam int KRTOT    = NSUB*4*RW*8,           // key-schedule randomness
-    localparam int L        = Nr*4,                  // encryption latency
-    localparam int KEY_LATENCY = (Nr+6)*4            // safe key-schedule settle time
+    parameter  int N     = 2,
+    localparam int RPERR = 16*sbox_rand_words(N)*8,
+    localparam int RNDW  = 14*RPERR
 )(
-    input  logic                    clk,
-    input  logic                    rst,
-    // key setup
-    input  logic                    key_valid,
-    input  logic [N*KEYSIZE*8-1:0]  key,             // N shares of the key
-    input  logic [KRTOT-1:0]        key_rnd,
-    output logic                    key_ready,
-    // data
-    input  logic                    in_valid,
-    input  logic [N*128-1:0]        state_in,        // N shares of plaintext
-    input  logic [Nr*RPERR-1:0]     rnd,
-    output logic                    out_valid,
-    output logic [N*128-1:0]        state_out         // N shares of ciphertext
+    input  logic                clk,
+    input  logic                rst,
+    input  logic                in_valid,
+    input  logic [1:0]          keysize,
+    input  logic [N*128-1:0]    state_in,
+    input  logic [N*15*128-1:0] round_keys,
+    input  logic [RNDW-1:0]     rnd,
+    output logic                out_valid,
+    output logic [N*128-1:0]    state_out
 );
-    // --- masked key schedule + valid-tracked setup latch ---
-    logic [(Nr+1)*N*128-1:0] rk_comb, rk_reg;
-    KEY_EXPANSION_TI #(.N(N), .KEYSIZE(KEYSIZE)) ks (
-        .clk(clk), .rst(rst), .key(key), .rnd(key_rnd), .round_keys(rk_comb));
-
-    // Track key_valid through the fixed-latency schedule; latch the settled round
-    // keys and raise key_ready together, so key_ready high => rk_reg is valid.
-    logic [KEY_LATENCY-1:0] kvalid_pipe;
-    always_ff @(posedge clk) begin
-        if (rst) begin
-            kvalid_pipe <= '0;
-            key_ready   <= 1'b0;
-        end else begin
-            kvalid_pipe <= {kvalid_pipe[KEY_LATENCY-2:0], key_valid};
-            key_ready   <= kvalid_pipe[KEY_LATENCY-1];
-            if (kvalid_pipe[KEY_LATENCY-1]) begin
-                rk_reg <= rk_comb;
-            end
-        end
-    end
-
-    // --- datapath (uses the latched round-key shares) ---
-    logic [N*128-1:0] stg [0:Nr];
-    ADDROUNDKEY_TI #(N) ark0 (
-        .state_in(state_in), .key_in(rk_reg[0*N*128 +: N*128]), .state_out(stg[0]));
-
-    genvar i;
+    logic [N*128-1:0] st_in;
+    genvar g;
     generate
-        for (i = 1; i < Nr; i++) begin : g_round
-            ROUND_TI #(N) r (
-                .clk(clk), .rst(rst),
-                .state_in  (stg[i-1]),
-                .round_key (rk_reg[i*N*128 +: N*128]),
-                .rnd       (rnd[(i-1)*RPERR +: RPERR]),
-                .state_out (stg[i]));
+        for (g = 0; g < N; g++) begin
+            AES_BYTES_TO_STATE b2s (
+                .bytes_in  (state_in[g*128 +: 128]),
+                .state_out (st_in[g*128 +: 128]   )
+            );
         end
     endgenerate
 
-    LASTROUND_TI #(N) rl (
-        .clk(clk), .rst(rst),
-        .state_in  (stg[Nr-1]),
-        .round_key (rk_reg[Nr*N*128 +: N*128]),
-        .rnd       (rnd[(Nr-1)*RPERR +: RPERR]),
-        .state_out (stg[Nr]));
+    logic [N*128-1:0] stg [0:13];
+    ADDROUNDKEY_TI #(N) ark0 (
+        .state_in  (st_in                       ),
+        .key_in    (round_keys[0*N*128 +: N*128]),
+        .state_out (stg[0]                      )
+    );
 
-    assign state_out = stg[Nr];
+    genvar i;
+    generate
+        for (i = 1; i <= 13; i++) begin : g_round
+            ROUND_TI #(N) round_i (
+                .clk       (clk                         ),
+                .rst       (rst                         ),
+                .state_in  (stg[i-1]                    ),
+                .round_key (round_keys[i*N*128 +: N*128]),
+                .rnd       (rnd[(i-1)*RPERR +: RPERR]   ),
+                .state_out (stg[i]                      )
+            );
+        end
+    endgenerate
 
-    logic [L-1:0] vpipe;
+    logic [N*128-1:0] tap_state;
+    logic [N*128-1:0] last_key;
+    assign tap_state = (keysize == KS_128) ? stg[9] : (keysize == KS_192) ? stg[11] : stg[13];
+    assign last_key  = (keysize == KS_128) ? round_keys[10*N*128 +: N*128] : (keysize == KS_192) ? round_keys[12*N*128 +: N*128] : round_keys[14*N*128 +: N*128];
+
+    logic [N*128-1:0] ct_state;
+    LASTROUND_TI #(N) last_round (
+        .clk       (clk                   ),
+        .rst       (rst                   ),
+        .state_in  (tap_state             ),
+        .round_key (last_key              ),
+        .rnd       (rnd[13*RPERR +: RPERR]),
+        .state_out (ct_state              )
+    );
+
+    generate
+        for (g = 0; g < N; g++) begin
+            AES_STATE_TO_BYTES s2b (
+                .state_in  (ct_state[g*128 +: 128] ),
+                .bytes_out (state_out[g*128 +: 128])
+            );
+        end
+    endgenerate
+
+    localparam int VW = 14*SBOX_LAT;
+    logic [VW-1:0] vpipe;
     always_ff @(posedge clk) begin
         if (rst) begin
             vpipe <= '0;
         end else begin
-            vpipe <= {vpipe[L-2:0], in_valid};
+            vpipe <= {vpipe[VW-2:0], in_valid};
         end
     end
-    assign out_valid = vpipe[L-1];
+
+    assign out_valid = (keysize == KS_128) ? vpipe[10*SBOX_LAT-1] : (keysize == KS_192) ? vpipe[12*SBOX_LAT-1] : vpipe[14*SBOX_LAT-1];
 endmodule

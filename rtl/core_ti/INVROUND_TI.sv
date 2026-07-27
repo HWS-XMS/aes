@@ -1,12 +1,10 @@
 import AES_PKG::*;
 import AES_TI_PKG::*;
-// INVROUND_TI - one masked inverse round (mirror of the unmasked INVROUND):
-// InvShiftRows -> InvSubBytes -> AddRoundKey -> InvMixColumns.  The pipelining
-// comes from the masked InvSubBytes (latency 4); the linear layers are combinational.
+// INVROUND_TI - one masked inverse round: InvShiftRows -> InvSubBytes ->
+// AddRoundKey -> InvMixColumns.  Pipelining from InvSubBytes (latency 8).
 module INVROUND_TI #(
     parameter  int N    = 2,
-    localparam int RW   = N*(N-1)/2,
-    localparam int RTOT = 16*4*RW*8
+    localparam int RTOT = 16*sbox_rand_words(N)*8
 )(
     input  logic             clk,
     input  logic             rst,
@@ -15,9 +13,27 @@ module INVROUND_TI #(
     input  logic [RTOT-1:0]  rnd,
     output logic [N*128-1:0] state_out
 );
-    logic [N*128-1:0] isr, isb, ark;
-    INVSHIFTROWS_TI #(N) sh (.state_in(state_in), .state_out(isr));
-    INVSUBBYTES_TI  #(N) su (.clk(clk), .rst(rst), .state_in(isr), .rnd(rnd), .state_out(isb));
-    ADDROUNDKEY_TI  #(N) ak (.state_in(isb), .key_in(round_key), .state_out(ark));
-    INVMIXCOLUMNS_TI#(N) mx (.state_in(ark), .state_out(state_out));
+    logic [N*128-1:0] isr;
+    logic [N*128-1:0] isb;
+    logic [N*128-1:0] ark;
+    INVSHIFTROWS_TI #(N) sh (
+        .state_in  (state_in),
+        .state_out (isr     )
+    );
+    INVSUBBYTES_TI #(N) su (
+        .clk       (clk),
+        .rst       (rst),
+        .state_in  (isr),
+        .rnd       (rnd),
+        .state_out (isb)
+    );
+    ADDROUNDKEY_TI #(N) ak (
+        .state_in  (isb      ),
+        .key_in    (round_key),
+        .state_out (ark      )
+    );
+    INVMIXCOLUMNS_TI #(N) mx (
+        .state_in  (ark      ),
+        .state_out (state_out)
+    );
 endmodule

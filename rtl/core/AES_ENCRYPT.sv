@@ -1,83 +1,70 @@
 import AES_PKG::*;
-// AES encryption datapath, fully pipelined: one registered stage per round.
-// Latency = Nr cycles, throughput = one block/cycle. in_valid is tracked through
-// the pipeline and asserted on out_valid when the matching ciphertext is ready.
-module AES_ENCRYPT #(
-    parameter  KEYSIZE      = 16,
-    localparam BLOCKSIZE    = 16,
-    localparam Nb           = 4,
-    localparam Nk           = KEYSIZE / Nb,
-    localparam Nr           = (Nk == 4) ? 10 : (Nk == 6) ? 12 : 14
-)(
-    input  logic                        clk,
-    input  logic                        rst,
-    input  logic                        in_valid,
-    input  byte_t       [BLOCKSIZE-1:0] plaintext,
-    input  byte_t       [KEYSIZE-1:0]   key,
-    output logic                        out_valid,
-    output byte_t       [BLOCKSIZE-1:0] ciphertext
+// AES_ENCRYPT - fully-unrolled AES encrypt datapath, runtime keysize.  Thirteen ROUND
+// stages; the size taps the chain after 9/11/13 rounds into one final round.  Round
+// keys come from the shared store.  Latency = Nr.
+module AES_ENCRYPT (
+    input  logic             clk,
+    input  logic             rst,
+    input  logic             in_valid,
+    input  byte_t     [15:0] plaintext,
+    input  logic      [ 1:0] keysize,
+    input  roundkey_t [14:0] round_keys,
+    output logic             out_valid,
+    output byte_t     [15:0] ciphertext
 );
-
-    // Round keys (combinational key schedule; round keys are static per key).
-    roundkey_t [Nr:0] round_keys;
-    KEY_EXPANSION #(.KEYSIZE(KEYSIZE)) kexp (
-        .key        (key),
-        .round_keys (round_keys)
-    );
-
-    // Input bytes -> state
     state_t pt_state;
-    AES_BYTES_TO_STATE plaintext_converter (
+    AES_BYTES_TO_STATE b2s (
         .bytes_in  (plaintext),
-        .state_out (pt_state)
+        .state_out (pt_state )
     );
 
-    // Pipeline stages: stage[0] = initial AddRoundKey (combinational),
-    // stage[1..Nr] = registered round outputs (one register per round).
-    state_t stage [0:Nr];
-
-    ADDROUNDKEY initial_add_round_key (
-        .state_in   (pt_state),
-        .round_key  (round_keys[0]),
-        .state_out  (stage[0])
+    state_t stage [0:13];
+    ADDROUNDKEY ark0 (
+        .state_in  (pt_state     ),
+        .round_key (round_keys[0]),
+        .state_out (stage[0]     )
     );
 
     genvar i;
     generate
-        for (i = 1; i < Nr; i++) begin : gen_rounds
+        for (i = 1; i <= 13; i++) begin : g_round
             ROUND round_i (
-                .clk        (clk),
-                .rst        (rst),
-                .round_key  (round_keys[i]),
-                .state_in   (stage[i-1]),
-                .state_out  (stage[i])
+                .clk       (clk          ),
+                .rst       (rst          ),
+                .round_key (round_keys[i]),
+                .state_in  (stage[i-1]   ),
+                .state_out (stage[i]     )
             );
         end
     endgenerate
 
+    state_t    tap_state;
+    roundkey_t last_key;
+    assign tap_state = (keysize == KS_128) ? stage[9] : (keysize == KS_192) ? stage[11] : stage[13];
+    assign last_key  = (keysize == KS_128) ? round_keys[10] : (keysize == KS_192) ? round_keys[12] : round_keys[14];
+
+    state_t ct_state;
     LASTROUND last_round (
-        .clk        (clk),
-        .rst        (rst),
-        .round_key  (round_keys[Nr]),
-        .state_in   (stage[Nr-1]),
-        .state_out  (stage[Nr])
+        .clk       (clk      ),
+        .rst       (rst      ),
+        .round_key (last_key ),
+        .state_in  (tap_state),
+        .state_out (ct_state )
     );
 
-    // Ciphertext state -> bytes
-    AES_STATE_TO_BYTES ciphertext_converter (
-        .state_in  (stage[Nr]),
+    AES_STATE_TO_BYTES s2b (
+        .state_in  (ct_state  ),
         .bytes_out (ciphertext)
     );
 
-    // Valid tracking: Nr registered stages => latency Nr cycles.
-    logic [Nr-1:0] valid_pipe;
+    logic [13:0] vpipe;
     always_ff @(posedge clk) begin
         if (rst) begin
-            valid_pipe <= '0;
+            vpipe <= '0;
         end else begin
-            valid_pipe <= {valid_pipe[Nr-2:0], in_valid};
+            vpipe <= {vpipe[12:0], in_valid};
         end
     end
-    assign out_valid = valid_pipe[Nr-1];
 
+    assign out_valid = (keysize == KS_128) ? vpipe[9] : (keysize == KS_192) ? vpipe[11] : vpipe[13];
 endmodule

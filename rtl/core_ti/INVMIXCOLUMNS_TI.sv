@@ -1,6 +1,5 @@
 import AES_PKG::*;
-// INVMIXCOLUMNS_TI - InvMixColumns applied share-wise (a plain INVMIXCOLUMNS per
-// share). Combinational.  Mirror of MIXCOLUMNS_TI.
+// INVMIXCOLUMNS_TI - InvMixColumns applied share-wise (linear).  Combinational.
 module INVMIXCOLUMNS_TI #(
     parameter int N = 2
 )(
@@ -9,7 +8,7 @@ module INVMIXCOLUMNS_TI #(
 );
     genvar s;
     generate
-        for (s = 0; s < N; s++) begin : g_share
+        for (s = 0; s < N; s++) begin
             INVMIXCOLUMNS mc (
                 .state_in  (state_in [s*128 +: 128]),
                 .state_out (state_out[s*128 +: 128])

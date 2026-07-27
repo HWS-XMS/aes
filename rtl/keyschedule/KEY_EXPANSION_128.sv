@@ -1,106 +1,114 @@
 import AES_PKG::*;
-module KEY_EXPANSION_128 #(
-    localparam KEYSIZE      = 16,
-    localparam BLOCKSIZE    = 16,
-    localparam Nb           = 4,
-    localparam Nk           = KEYSIZE / Nb,
-    localparam Nr           = 10
-)(
-    input  byte_t       [KEYSIZE-1:0]   key,
-    output roundkey_t   [Nr:0]          round_keys
+// KEY_EXPANSION_128 - pipelined AES-128 key schedule with a key_valid/key_ready
+// handshake: the FIPS-197 column recurrence registered per Nk-column group (one
+// stage each).  key_ready rises NG cycles after key_valid and holds the settled
+// schedule.  Reference: NIST FIPS-197 App. A.
+module KEY_EXPANSION_128 (
+    input  logic             clk,
+    input  logic             rst,
+    input  logic             key_valid,
+    input  byte_t     [15:0] key,
+    output logic             key_ready,
+    output roundkey_t [10:0] round_keys
 );
+    localparam int Nk   = 4;
+    localparam int Nr   = 10;
+    localparam int NCOL = (Nr + 1) * 4;
+    localparam int NG   = NCOL / Nk;
 
-    // RCON values for key expansion
     logic [31:0] rcon [0:9];
-    initial begin
-        $readmemh("RCON.mem", rcon);
-    end
+    initial $readmemh("RCON.mem", rcon);
 
-    // Expanded key columns (44 columns for AES-128)
-    column_t [((Nr+1)*Nb)-1:0] key_columns;
-    
-    // Initial key columns - direct mapping from input key
-    // Key bytes are in order: k0,k1,k2,...,k15
-    // Column 0: k0,k1,k2,k3
-    // Column 1: k4,k5,k6,k7
-    // Column 2: k8,k9,k10,k11
-    // Column 3: k12,k13,k14,k15
+    column_t col_reg [0:NCOL-1];
+    column_t col_nxt [0:NCOL-1];
+
+    genvar c;
     genvar k;
+    genvar b;
+    genvar r;
+
+    // stage 0: first Nk columns straight from the key
     generate
-        for (k = 0; k < Nk; k++) begin : gen_initial_key
-            assign key_columns[k][0] = key[15 - (k*4 + 0)];
-            assign key_columns[k][1] = key[15 - (k*4 + 1)];
-            assign key_columns[k][2] = key[15 - (k*4 + 2)];
-            assign key_columns[k][3] = key[15 - (k*4 + 3)];
-        end
-    endgenerate
-    
-    // Key expansion - generate remaining columns
-    genvar i;
-    generate
-        for (i = Nk; i < (Nr+1)*Nb; i++) begin : gen_key_expansion
-            if (i % Nk == 0) begin : gen_rcon_round
-                // For columns that are multiples of Nk, apply the key schedule core
-                column_t rotated, subbed, rconned;
-                
-                // RotWord
-                assign rotated[0] = key_columns[i-1][1];
-                assign rotated[1] = key_columns[i-1][2];
-                assign rotated[2] = key_columns[i-1][3];
-                assign rotated[3] = key_columns[i-1][0];
-                
-                // SubWord
-                SBOX sb0 (.sbox_in(rotated[0]), .sbox_out(subbed[0]));
-                SBOX sb1 (.sbox_in(rotated[1]), .sbox_out(subbed[1]));
-                SBOX sb2 (.sbox_in(rotated[2]), .sbox_out(subbed[2]));
-                SBOX sb3 (.sbox_in(rotated[3]), .sbox_out(subbed[3]));
-                
-                // XOR with RCON
-                assign rconned[0] = subbed[0] ^ rcon[i/Nk - 1][31:24];
-                assign rconned[1] = subbed[1] ^ rcon[i/Nk - 1][23:16];
-                assign rconned[2] = subbed[2] ^ rcon[i/Nk - 1][15:8];
-                assign rconned[3] = subbed[3] ^ rcon[i/Nk - 1][7:0];
-                
-                // XOR with column Nk positions back
-                assign key_columns[i][0] = key_columns[i-Nk][0] ^ rconned[0];
-                assign key_columns[i][1] = key_columns[i-Nk][1] ^ rconned[1];
-                assign key_columns[i][2] = key_columns[i-Nk][2] ^ rconned[2];
-                assign key_columns[i][3] = key_columns[i-Nk][3] ^ rconned[3];
-            end else begin : gen_simple_round
-                // For other columns, simple XOR
-                assign key_columns[i][0] = key_columns[i-1][0] ^ key_columns[i-Nk][0];
-                assign key_columns[i][1] = key_columns[i-1][1] ^ key_columns[i-Nk][1];
-                assign key_columns[i][2] = key_columns[i-1][2] ^ key_columns[i-Nk][2];
-                assign key_columns[i][3] = key_columns[i-1][3] ^ key_columns[i-Nk][3];
+        for (k = 0; k < Nk; k++) begin
+            for (b = 0; b < 4; b++) begin
+                assign col_nxt[k][b] = key[15 - (k*4 + b)];
             end
         end
     endgenerate
-    
-    // Map key columns to round keys
-    // Each round key consists of 4 consecutive columns
-    genvar r;
+
+    // stages 1..NG-1: RotWord -> SubWord -> Rcon -> XOR col[c-Nk], else plain XOR
     generate
-        for (r = 0; r <= Nr; r++) begin : gen_round_keys
-            assign round_keys[r][0][0] = key_columns[r*4 + 0][0];
-            assign round_keys[r][0][1] = key_columns[r*4 + 0][1];
-            assign round_keys[r][0][2] = key_columns[r*4 + 0][2];
-            assign round_keys[r][0][3] = key_columns[r*4 + 0][3];
-            
-            assign round_keys[r][1][0] = key_columns[r*4 + 1][0];
-            assign round_keys[r][1][1] = key_columns[r*4 + 1][1];
-            assign round_keys[r][1][2] = key_columns[r*4 + 1][2];
-            assign round_keys[r][1][3] = key_columns[r*4 + 1][3];
-            
-            assign round_keys[r][2][0] = key_columns[r*4 + 2][0];
-            assign round_keys[r][2][1] = key_columns[r*4 + 2][1];
-            assign round_keys[r][2][2] = key_columns[r*4 + 2][2];
-            assign round_keys[r][2][3] = key_columns[r*4 + 2][3];
-            
-            assign round_keys[r][3][0] = key_columns[r*4 + 3][0];
-            assign round_keys[r][3][1] = key_columns[r*4 + 3][1];
-            assign round_keys[r][3][2] = key_columns[r*4 + 3][2];
-            assign round_keys[r][3][3] = key_columns[r*4 + 3][3];
+        for (c = Nk; c < NCOL; c++) begin
+            if (c % Nk == 0) begin
+                column_t rotw;
+                column_t subw;
+                assign rotw[0] = col_reg[c-1][1];
+                assign rotw[1] = col_reg[c-1][2];
+                assign rotw[2] = col_reg[c-1][3];
+                assign rotw[3] = col_reg[c-1][0];
+                SBOX s0 (
+                    .sbox_in  (rotw[0]),
+                    .sbox_out (subw[0])
+                );
+                SBOX s1 (
+                    .sbox_in  (rotw[1]),
+                    .sbox_out (subw[1])
+                );
+                SBOX s2 (
+                    .sbox_in  (rotw[2]),
+                    .sbox_out (subw[2])
+                );
+                SBOX s3 (
+                    .sbox_in  (rotw[3]),
+                    .sbox_out (subw[3])
+                );
+                assign col_nxt[c][0] = col_reg[c-Nk][0] ^ subw[0] ^ rcon[c/Nk-1][31:24];
+                assign col_nxt[c][1] = col_reg[c-Nk][1] ^ subw[1] ^ rcon[c/Nk-1][23:16];
+                assign col_nxt[c][2] = col_reg[c-Nk][2] ^ subw[2] ^ rcon[c/Nk-1][15:8];
+                assign col_nxt[c][3] = col_reg[c-Nk][3] ^ subw[3] ^ rcon[c/Nk-1][7:0];
+            end else begin
+                assign col_nxt[c] = col_nxt[c-1] ^ col_reg[c-Nk];
+            end
         end
     endgenerate
 
+    logic [NG-1:0] sh;
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            sh        <= '0;
+            key_ready <= 1'b0;
+        end else begin
+            sh <= {sh[NG-2:0], key_valid};
+            if (key_valid) begin
+                key_ready <= 1'b0;
+            end else if (sh[NG-1]) begin
+                key_ready <= 1'b1;
+            end else begin
+                key_ready <= key_ready;
+            end
+        end
+    end
+
+    generate
+        for (c = 0; c < NCOL; c++) begin
+            localparam int STG = c / Nk;
+            always_ff @(posedge clk) begin
+                if (rst) begin
+                    col_reg[c] <= '0;
+                end else if (STG == 0 ? key_valid : sh[STG-1]) begin
+                    col_reg[c] <= col_nxt[c];
+                end else begin
+                    col_reg[c] <= col_reg[c];
+                end
+            end
+        end
+    endgenerate
+
+    generate
+        for (r = 0; r <= Nr; r++) begin
+            for (k = 0; k < 4; k++) begin
+                assign round_keys[r][k] = col_reg[r*4 + k];
+            end
+        end
+    endgenerate
 endmodule

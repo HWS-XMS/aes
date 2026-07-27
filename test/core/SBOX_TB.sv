@@ -3,15 +3,19 @@ import AES_PKG::*;
 module SBOX_TB;
     `include "tb_check.svh"
 
-    byte_t sbox_in, sbox_out;
-    reg [7:0] nist_sbox [0:255];   // NIST FIPS-197 S-box (Fig. 7), loaded from sbox.mem
+    byte_t sbox_in;
+    byte_t sbox_out;
+    reg [7:0] nist_sbox [0:255];
 
-    SBOX dut (.sbox_in(sbox_in), .sbox_out(sbox_out));
+    SBOX dut (
+        .sbox_in  (sbox_in ),
+        .sbox_out (sbox_out)
+    );
 
     integer x;
     initial begin
         $readmemh("sbox.mem", nist_sbox);
-        for (x = 0; x < 256; x = x + 1) begin
+        for (x = 0; x < 256; x++) begin
             sbox_in = x[7:0];
             #1;
             `CHK_EQ("S-box(x)", sbox_out, nist_sbox[x]);

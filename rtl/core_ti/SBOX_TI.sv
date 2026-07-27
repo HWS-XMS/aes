@@ -1,18 +1,11 @@
 import AES_PKG::*;
 import AES_TI_PKG::*;
-// ============================================================================
-// SBOX_TI - DOM-masked AES S-box, N shares (protection order d = N-1).
-//
-//   S(x) = affine( x^254 ) ^ 0x63
-//
-// The multiplicative inverse is the shared GF_INV_TI pipeline; the affine map is
-// linear (applied per share) with the constant 0x63 folded into a single share.
-// Latency = GF_INV_TI latency (4 cycles).  `rnd` holds 4 * N*(N-1)/2 words.
-// ============================================================================
+// SBOX_TI - DOM/HPC1-masked AES S-box, N shares: S(x) = affine(x^254) ^ 0x63.
+// The inverse is the shared GF_INV_TI; the affine is linear (0x63 into one share).
+// Latency = GF_INV_TI (8).  rnd holds sbox_rand_words(N) words.
 module SBOX_TI #(
     parameter  int N    = 2,
-    localparam int RW   = N*(N-1)/2,
-    localparam int RALL = (RW*8*4 > 0) ? RW*8*4 : 1
+    localparam int RALL = sbox_rand_words(N)*8
 )(
     input  logic            clk,
     input  logic            rst,
@@ -26,12 +19,19 @@ module SBOX_TI #(
         end
     endfunction
 
-    logic [N*8-1:0] inv, aff;
-    GF_INV_TI #(N) ginv (.clk(clk), .rst(rst), .x(x), .rnd(rnd), .y(inv));
+    logic [N*8-1:0] inv;
+    logic [N*8-1:0] aff;
+    GF_INV_TI #(N) ginv (
+        .clk (clk),
+        .rst (rst),
+        .x   (x  ),
+        .rnd (rnd),
+        .y   (inv)
+    );
 
     assign aff = sw_affine(inv);
     always_comb begin
         y = aff;
-        y[7:0] = aff[7:0] ^ AES_AFFINE_CONST;   // constant into share 0
+        y[7:0] = aff[7:0] ^ AES_AFFINE_CONST;
     end
 endmodule

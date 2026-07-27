@@ -1,9 +1,9 @@
 import AES_PKG::*;
+// INVSBOX - AES inverse S-box (FIPS-197 substitution table).
 module INVSBOX (
-    input  byte_t       sbox_in, 
-    output byte_t       sbox_out
+    input  byte_t sbox_in,
+    output byte_t sbox_out
 );
-
     always_comb begin
         case (sbox_in)
             8'h00: sbox_out = 8'h52;
@@ -264,5 +264,4 @@ module INVSBOX (
             8'hff: sbox_out = 8'h7d;
         endcase
     end
-
 endmodule

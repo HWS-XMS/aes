@@ -1,85 +1,79 @@
 import AES_PKG::*;
-
-// AES decryption datapath, fully pipelined: one registered stage per inverse
-// round. Latency = Nr cycles, throughput = one block/cycle. in_valid is tracked
-// through the pipeline and asserted on out_valid when the plaintext is ready.
-
-module AES_DECRYPT #(
-    parameter  KEYSIZE      = 16,
-    localparam BLOCKSIZE    = 16,
-    localparam Nb           = 4,
-    localparam Nk           = KEYSIZE / Nb,
-    localparam Nr           = (Nk == 4) ? 10 : (Nk == 6) ? 12 : 14
-)(
-    input  logic                        clk,
-    input  logic                        rst,
-    input  logic                        in_valid,
-    input  byte_t       [BLOCKSIZE-1:0] ciphertext,
-    input  byte_t       [KEYSIZE-1:0]   key,
-    output logic                        out_valid,
-    output byte_t       [BLOCKSIZE-1:0] plaintext
+// AES_DECRYPT - fully-unrolled AES decrypt datapath, runtime keysize.  Mirror of
+// AES_ENCRYPT: the initial-AddRoundKey(rk_Nr)'d ciphertext is injected into the
+// 13-stage inverse chain at stage 5/3/1 for 128/192/256; stage j uses rk[14-j].
+// Latency = Nr.
+module AES_DECRYPT (
+    input  logic             clk,
+    input  logic             rst,
+    input  logic             in_valid,
+    input  byte_t     [15:0] ciphertext,
+    input  logic      [ 1:0] keysize,
+    input  roundkey_t [14:0] round_keys,
+    output logic             out_valid,
+    output byte_t     [15:0] plaintext
 );
-
-    // Round keys (combinational key schedule; round keys are static per key).
-    roundkey_t [Nr:0] round_keys;
-    KEY_EXPANSION #(.KEYSIZE(KEYSIZE)) kexp (
-        .key        (key),
-        .round_keys (round_keys)
-    );
-
-    // Input bytes -> state
     state_t ct_state;
-    AES_BYTES_TO_STATE ciphertext_converter (
+    AES_BYTES_TO_STATE b2s (
         .bytes_in  (ciphertext),
-        .state_out (ct_state)
+        .state_out (ct_state  )
     );
 
-    // Pipeline stages: stage[0] = initial AddRoundKey with the last round key
-    // (combinational), stage[1..Nr] = registered inverse-round outputs.
-    state_t stage [0:Nr];
+    roundkey_t init_key;
+    assign init_key = (keysize == KS_128) ? round_keys[10] : (keysize == KS_192) ? round_keys[12] : round_keys[14];
 
-    ADDROUNDKEY initial_add_round_key (
-        .state_in   (ct_state),
-        .round_key  (round_keys[Nr]),
-        .state_out  (stage[0])
+    state_t stage0;
+    ADDROUNDKEY ark0 (
+        .state_in  (ct_state),
+        .round_key (init_key),
+        .state_out (stage0  )
     );
 
-    genvar i;
+    logic [3:0] inject;
+    assign inject = (keysize == KS_128) ? 4'd5 : (keysize == KS_192) ? 4'd3 : 4'd1;
+
+    state_t invstage [1:13];
+    state_t invin    [1:13];
+    genvar j;
     generate
-        for (i = 1; i < Nr; i++) begin : gen_inv_rounds
-            INVROUND inv_round_i (
-                .clk        (clk),
-                .rst        (rst),
-                .round_key  (round_keys[Nr-i]),
-                .state_in   (stage[i-1]),
-                .state_out  (stage[i])
+        for (j = 1; j <= 13; j++) begin : g_invround
+            if (j == 1) begin
+                assign invin[j] = stage0;
+            end else begin
+                assign invin[j] = (j <= inject) ? stage0 : invstage[j-1];
+            end
+            INVROUND invr (
+                .clk       (clk             ),
+                .rst       (rst             ),
+                .round_key (round_keys[14-j]),
+                .state_in  (invin[j]        ),
+                .state_out (invstage[j]     )
             );
         end
     endgenerate
 
-    INVLASTROUND inv_last_round (
-        .clk        (clk),
-        .rst        (rst),
-        .round_key  (round_keys[0]),
-        .state_in   (stage[Nr-1]),
-        .state_out  (stage[Nr])
+    state_t pt_state;
+    INVLASTROUND inv_last (
+        .clk       (clk          ),
+        .rst       (rst          ),
+        .round_key (round_keys[0]),
+        .state_in  (invstage[13] ),
+        .state_out (pt_state     )
     );
 
-    // Plaintext state -> bytes
-    AES_STATE_TO_BYTES plaintext_converter (
-        .state_in  (stage[Nr]),
+    AES_STATE_TO_BYTES s2b (
+        .state_in  (pt_state ),
         .bytes_out (plaintext)
     );
 
-    // Valid tracking: Nr registered stages => latency Nr cycles.
-    logic [Nr-1:0] valid_pipe;
+    logic [13:0] vpipe;
     always_ff @(posedge clk) begin
         if (rst) begin
-            valid_pipe <= '0;
+            vpipe <= '0;
         end else begin
-            valid_pipe <= {valid_pipe[Nr-2:0], in_valid};
+            vpipe <= {vpipe[12:0], in_valid};
         end
     end
-    assign out_valid = valid_pipe[Nr-1];
 
+    assign out_valid = (keysize == KS_128) ? vpipe[9] : (keysize == KS_192) ? vpipe[11] : vpipe[13];
 endmodule

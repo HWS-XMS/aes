@@ -1,7 +1,8 @@
 import AES_PKG::*;
+// SBOX - AES S-box (FIPS-197 substitution table).
 module SBOX (
-    input  byte_t       sbox_in,
-    output byte_t       sbox_out
+    input  byte_t sbox_in,
+    output byte_t sbox_out
 );
     always_comb begin
         case (sbox_in)

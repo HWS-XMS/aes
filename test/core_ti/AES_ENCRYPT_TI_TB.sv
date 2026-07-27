@@ -1,77 +1,130 @@
 import AES_PKG::*;
-// AES_ENCRYPT_TI_TB - end-to-end DOM-masked AES-128 encryption, N = 2 (the
-// ASCAD-comparable first order).  The core embeds the masked key schedule, so
-// the TB drives the *shared key* via the key_valid/key_ready handshake, then the
-// plaintext; the output shares are recombined -> bytes -> compared to OpenSSL.
-//
-// Re-keying is exercised WITHOUT any reset between vectors: each iteration loads
-// a fresh (shared) key and waits for key_ready, proving the core accepts a new
-// key with no reset.  Stimulus changes #1 after the posedge (clk-to-Q) and status
-// is sampled #1 after the posedge - a normal synchronous producer/consumer, not
-// a falling-edge hack.
-//
-// Coverage note: N-scaling (N=2,3,4) is proven in SBOX_TI_TB; the 192/256 masked
-// key schedules in KEY_EXPANSION_{192,256}_TI_TB; so the 192/256 embed cores
-// (identical structure, larger Nr) are covered by composition.
+import AES_TI_PKG::*;
+// AES_ENCRYPT_TI_TB - tapped DOM-masked encrypt datapath, N = 2, all three sizes.
+// Round-key shares from KEY_EXPANSION_TI (key_rnd = 0 -> stable) muxed by size;
+// datapath runs rnd = 0.  Recombined ciphertext vs OpenSSL (taps 9/11/13).
 module AES_ENCRYPT_TI_TB;
     `include "tb_check.svh"
 
-    localparam int MAXV = 64;
-    localparam int LAT  = 10*4;                 // encryption latency (Nr*4)
-    logic clk = 0, rst = 1;
-    always begin #5 clk = ~clk; end
+    localparam int N     = 2;
+    localparam int RPERR = 16*sbox_rand_words(N)*8;
+    localparam int RNDW  = 14*RPERR;
+    localparam int KRTOT = 31*4*sbox_rand_words(N)*8;
+    localparam int NV    = 8;
 
-    logic [127:0] pt_blk;
-    state_t pt_state;
-    AES_BYTES_TO_STATE p2s (.bytes_in(pt_blk), .state_out(pt_state));
+    logic clk = 0;
+    logic rst = 1;
+    logic kvld = 0;
+    logic kr;
+    logic [1:0]          ksz     = KS_128;
+    logic [N*256-1:0]    key_in  = '0;
+    logic [KRTOT-1:0]    key_rnd = '0;
+    logic [N*11*128-1:0] rk128;
+    logic [N*13*128-1:0] rk192;
+    logic [N*15*128-1:0] rk256;
 
-    logic kv = 0, iv = 0, kr, ov;
-    logic [2*128-1:0] k = '0, si = '0, so;
-    logic [ (10*4*1*8)-1:0]    krn;    // NSUB=10
-    logic [ (10*16*4*1*8)-1:0] rn;     // Nr=10
-    AES_ENCRYPT_TI #(.N(2), .KEYSIZE(16)) enc (.clk(clk), .rst(rst),
-        .key_valid(kv), .key(k), .key_rnd(krn), .key_ready(kr),
-        .in_valid(iv), .state_in(si), .rnd(rn), .out_valid(ov), .state_out(so));
+    KEY_EXPANSION_TI #(N) ke (
+        .clk            (clk    ),
+        .rst            (rst    ),
+        .key_valid      (kvld   ),
+        .key            (key_in ),
+        .rnd            (key_rnd),
+        .key_ready      (kr     ),
+        .round_keys_128 (rk128  ),
+        .round_keys_192 (rk192  ),
+        .round_keys_256 (rk256  )
+    );
 
-    // functional correctness is randomness-independent -> drive DOM randomness 0
-    initial begin krn = '0; rn = '0; end
+    logic [N*15*128-1:0] round_keys;
+    integer rr;
+    always_comb begin
+        round_keys = '0;
+        case (ksz)
+            KS_128: begin
+                for (rr = 0; rr <= 10; rr++) begin
+                    round_keys[rr*N*128 +: N*128] = rk128[rr*N*128 +: N*128];
+                end
+            end
+            KS_192: begin
+                for (rr = 0; rr <= 12; rr++) begin
+                    round_keys[rr*N*128 +: N*128] = rk192[rr*N*128 +: N*128];
+                end
+            end
+            default: round_keys = rk256;
+        endcase
+    end
 
-    logic [127:0] rec_state, cb;
-    assign rec_state = so[0 +: 128] ^ so[128 +: 128];
-    AES_STATE_TO_BYTES b (.state_in(rec_state), .bytes_out(cb));
+    logic iv = 0;
+    logic ov;
+    logic [N*128-1:0] si = '0;
+    logic [N*128-1:0] so;
+    logic [RNDW-1:0]  rnd = '0;
+    AES_ENCRYPT_TI #(N) dut (
+        .clk        (clk       ),
+        .rst        (rst       ),
+        .in_valid   (iv        ),
+        .keysize    (ksz       ),
+        .state_in   (si        ),
+        .round_keys (round_keys),
+        .rnd        (rnd       ),
+        .out_valid  (ov        ),
+        .state_out  (so        )
+    );
 
-    function automatic logic [127:0] r128; r128 = {$random,$random,$random,$random}; endfunction
+    always #5 clk = ~clk;
 
-    reg [127:0] pt_m[0:MAXV-1], ct_m[0:MAXV-1], key_m[0:MAXV-1];
-    reg [31:0]  nv_m[0:0];
-    logic [127:0] mask;
-    integer i, nvec;
+    logic [127:0] rec;
+    assign rec = so[0 +: 128] ^ so[128 +: 128];
+
+    function automatic logic [127:0] rnd128;
+        rnd128 = {$random, $random, $random, $random};
+    endfunction
+
+    reg [127:0] pt_m  [0:63];
+    reg [127:0] ct_m  [0:63];
+    reg [255:0] key_m [0:63];
+    integer i;
+    logic [255:0] mk;
+    logic [127:0] m;
+
+    task automatic run_size(input logic [1:0] ks,
+                            input string pf, input string kf, input string cf);
+        $readmemh(pf, pt_m);
+        $readmemh(kf, key_m);
+        $readmemh(cf, ct_m);
+        for (i = 0; i < NV; i++) begin
+            @(posedge clk); #1;
+            ksz = ks;
+            mk  = {rnd128(), rnd128()};
+            key_in[0 +: 256]   = key_m[i] ^ mk;
+            key_in[256 +: 256] = mk;
+            kvld = 1;
+            @(posedge clk); #1;
+            kvld = 0;
+            while (!kr) begin
+                @(posedge clk); #1;
+            end
+            @(posedge clk); #1;
+            m = rnd128();
+            si[0 +: 128]   = pt_m[i] ^ m;
+            si[128 +: 128] = m;
+            iv = 1;
+            @(posedge clk); #1;
+            iv = 0;
+            while (!ov) begin
+                @(posedge clk); #1;
+            end
+            `CHK_EQ("enc", rec, ct_m[i]);
+        end
+    endtask
 
     initial begin
-        $readmemh("aes128_pt.mem", pt_m); $readmemh("aes128_key.mem", key_m);
-        $readmemh("aes128_ct.mem", ct_m); $readmemh("ecb_nvec.mem", nv_m);
-        nvec = nv_m[0];
-
-        // single global reset, then every key is loaded reset-free
-        repeat (2) begin @(posedge clk); end #1; rst = 0;
-
-        for (i = 0; i < nvec; i++) begin
-            // ---- key setup: valid/ready handshake ----
-            mask = r128();
-            k = {mask, key_m[i] ^ mask};        // {share1, share0}, recombine = key
-            kv = 1;
-            @(posedge clk); #1; kv = 0;         // one-cycle key_valid pulse
-            while (!kr) begin @(posedge clk); #1; end   // wait for key_ready (rk_reg valid)
-            // ---- encrypt one block ----
-            pt_blk = pt_m[i]; #1;               // let combinational pt_state settle
-            mask = r128();
-            si = {mask, pt_state ^ mask};
-            iv = 1;
-            @(posedge clk); #1; iv = 0;         // one-cycle in_valid pulse
-            repeat (LAT) begin @(posedge clk); end #1;
-            `CHK_EQ("enc128", cb, ct_m[i]);
-        end
-        `CHK("read vectors", nvec > 0);
+        repeat (2) @(posedge clk); #1;
+        rst = 0;
+        run_size(KS_128, "aes128_pt.mem", "aes128_key.mem", "aes128_ct.mem");
+        run_size(KS_192, "aes192_pt.mem", "aes192_key.mem", "aes192_ct.mem");
+        run_size(KS_256, "aes256_pt.mem", "aes256_key.mem", "aes256_ct.mem");
+        `CHK("done", 1);
         `TB_SUMMARY("AES_ENCRYPT_TI_TB");
     end
 endmodule

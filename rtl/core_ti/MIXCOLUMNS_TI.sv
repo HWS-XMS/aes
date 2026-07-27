@@ -1,6 +1,5 @@
 import AES_PKG::*;
-// MIXCOLUMNS_TI - MixColumns is linear, so it is applied independently to each
-// of the N Boolean shares (a plain MIXCOLUMNS per share). Combinational.
+// MIXCOLUMNS_TI - MixColumns applied share-wise (linear).  Combinational.
 module MIXCOLUMNS_TI #(
     parameter int N = 2
 )(
@@ -9,7 +8,7 @@ module MIXCOLUMNS_TI #(
 );
     genvar s;
     generate
-        for (s = 0; s < N; s++) begin : g_share
+        for (s = 0; s < N; s++) begin
             MIXCOLUMNS mc (
                 .state_in  (state_in [s*128 +: 128]),
                 .state_out (state_out[s*128 +: 128])

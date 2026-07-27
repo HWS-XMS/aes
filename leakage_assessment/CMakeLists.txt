@@ -47,3 +47,23 @@ foreach(NS 2 3)
         VERILATOR_ARGS ${VARGS} +define+NSHARES=${NS})
     target_link_libraries(${tgt} PRIVATE sca)
 endforeach()
+
+# --- unmasked AES-128 key schedule (baseline) ---
+add_executable(sim_keyexp tb/sim_main.cpp)
+target_compile_definitions(sim_keyexp PRIVATE
+    SIM_TOP_HEADER="Vtb_keyexp_sca.h" SIM_TOP_TYPE=Vtb_keyexp_sca)
+verilate(sim_keyexp SOURCES ${RTL_SRC} tb/tb_keyexp_sca.sv
+    TOP_MODULE tb_keyexp_sca PREFIX Vtb_keyexp_sca VERILATOR_ARGS ${VARGS})
+target_link_libraries(sim_keyexp PRIVATE sca)
+
+# --- masked AES-128 key schedule, N shares (one target per N) ---
+foreach(NS 2 3)
+    set(tgt sim_keyexp_ti_n${NS})
+    add_executable(${tgt} tb/sim_main.cpp)
+    target_compile_definitions(${tgt} PRIVATE
+        SIM_TOP_HEADER="V${tgt}.h" SIM_TOP_TYPE=V${tgt})
+    verilate(${tgt} SOURCES ${RTL_SRC} tb/tb_keyexp_ti_sca.sv
+        TOP_MODULE tb_keyexp_ti_sca PREFIX V${tgt}
+        VERILATOR_ARGS ${VARGS} +define+NSHARES=${NS})
+    target_link_libraries(${tgt} PRIVATE sca)
+endforeach()

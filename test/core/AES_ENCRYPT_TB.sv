@@ -1,73 +1,107 @@
 import AES_PKG::*;
-// AES_ENCRYPT_TB - drives the pipelined encryptor and checks every ciphertext
-// against the OpenSSL reference vectors (test/ref/aes{128,192,256}_*.mem), which
-// include the FIPS-197 known-answer anchors as the first entry.
+// AES_ENCRYPT_TB - drives the tapped runtime-size encrypt datapath; checks every
+// ciphertext vs the OpenSSL vectors (round keys from the verified KEY_EXPANSION,
+// so the taps 9/11/13 are exercised for all three sizes).
 module AES_ENCRYPT_TB;
     `include "tb_check.svh"
 
     localparam int MAXV = 256;
 
-    logic clk = 0, rst = 1;
-    logic [127:0] pt, exp;
-    logic [255:0] key;
-    logic iv128 = 0, iv192 = 0, iv256 = 0;
-    logic ov128, ov192, ov256;
-    logic [127:0] ct128, ct192, ct256;
+    logic clk = 0;
+    logic rst = 1;
+    logic key_valid = 0;
+    logic key_ready;
+    logic [1:0] keysize = KS_128;
+    byte_t [31:0] key = '0;
+    roundkey_t [10:0] rk128;
+    roundkey_t [12:0] rk192;
+    roundkey_t [14:0] rk256;
+    roundkey_t [14:0] round_keys;
+    logic in_valid = 0;
+    logic out_valid;
+    byte_t [15:0] pt = '0;
+    byte_t [15:0] ct;
 
-    AES_ENCRYPT #(16) e128 (.clk(clk), .rst(rst), .in_valid(iv128),
-        .plaintext(pt), .key(key[127:0]), .out_valid(ov128), .ciphertext(ct128));
-    AES_ENCRYPT #(24) e192 (.clk(clk), .rst(rst), .in_valid(iv192),
-        .plaintext(pt), .key(key[191:0]), .out_valid(ov192), .ciphertext(ct192));
-    AES_ENCRYPT #(32) e256 (.clk(clk), .rst(rst), .in_valid(iv256),
-        .plaintext(pt), .key(key[255:0]), .out_valid(ov256), .ciphertext(ct256));
+    KEY_EXPANSION ke (
+        .clk            (clk      ),
+        .rst            (rst      ),
+        .key_valid      (key_valid),
+        .key            (key      ),
+        .key_ready      (key_ready),
+        .round_keys_128 (rk128    ),
+        .round_keys_192 (rk192    ),
+        .round_keys_256 (rk256    )
+    );
 
-    always #5 begin clk = ~clk; end
+    integer rr;
+    always_comb begin
+        round_keys = '0;
+        case (keysize)
+            KS_128: for (rr = 0; rr <= 10; rr++) begin
+                round_keys[rr] = rk128[rr];
+            end
+            KS_192: for (rr = 0; rr <= 12; rr++) begin
+                round_keys[rr] = rk192[rr];
+            end
+            default: for (rr = 0; rr <= 14; rr++) begin
+                round_keys[rr] = rk256[rr];
+            end
+        endcase
+    end
+
+    AES_ENCRYPT dut (
+        .clk        (clk       ),
+        .rst        (rst       ),
+        .in_valid   (in_valid  ),
+        .plaintext  (pt        ),
+        .keysize    (keysize   ),
+        .round_keys (round_keys),
+        .out_valid  (out_valid ),
+        .ciphertext (ct        )
+    );
+
+    always #5 clk = ~clk;
 
     reg [127:0] pt_m  [0:MAXV-1];
     reg [255:0] key_m [0:MAXV-1];
     reg [127:0] ct_m  [0:MAXV-1];
     integer i;
 
+    task automatic run_size(input logic [1:0] ks, input string pf, input string kf, input string cf);
+        $readmemh(pf, pt_m);
+        $readmemh(kf, key_m);
+        $readmemh(cf, ct_m);
+        i = 0;
+        while (i < MAXV && (^pt_m[i] !== 1'bx)) begin
+            @(posedge clk); #1;
+            keysize   = ks;
+            key       = key_m[i];
+            key_valid = 1;
+            @(posedge clk); #1;
+            key_valid = 0;
+            while (!key_ready) begin
+                @(posedge clk); #1;
+            end
+            @(posedge clk); #1;
+            pt       = pt_m[i];
+            in_valid = 1;
+            @(posedge clk); #1;
+            in_valid = 0;
+            while (!out_valid) begin
+                @(posedge clk); #1;
+            end
+            `CHK_EQ("ct", ct, ct_m[i]);
+            i++;
+        end
+        `CHK("read vectors", i > 0);
+    endtask
+
     initial begin
-        repeat (2) begin @(posedge clk); end rst = 0; @(posedge clk);
-
-        // ---- AES-128 (latency 10) ----
-        $readmemh("aes128_pt.mem", pt_m);
-        $readmemh("aes128_key.mem", key_m);
-        $readmemh("aes128_ct.mem", ct_m);
-        i = 0;
-        while (i < MAXV && (^pt_m[i] !== 1'bx)) begin
-            pt = pt_m[i]; key = key_m[i]; exp = ct_m[i];
-            iv128 = 1; @(posedge clk); iv128 = 0; repeat (10) begin @(posedge clk); end #1;
-            `CHK_EQ("enc128", ct128, exp);
-            i = i + 1;
-        end
-        `CHK("enc128 read vectors", i > 0);
-
-        // ---- AES-192 (latency 12) ----
-        $readmemh("aes192_pt.mem", pt_m);
-        $readmemh("aes192_key.mem", key_m);
-        $readmemh("aes192_ct.mem", ct_m);
-        i = 0;
-        while (i < MAXV && (^pt_m[i] !== 1'bx)) begin
-            pt = pt_m[i]; key = key_m[i]; exp = ct_m[i];
-            iv192 = 1; @(posedge clk); iv192 = 0; repeat (12) begin @(posedge clk); end #1;
-            `CHK_EQ("enc192", ct192, exp);
-            i = i + 1;
-        end
-
-        // ---- AES-256 (latency 14) ----
-        $readmemh("aes256_pt.mem", pt_m);
-        $readmemh("aes256_key.mem", key_m);
-        $readmemh("aes256_ct.mem", ct_m);
-        i = 0;
-        while (i < MAXV && (^pt_m[i] !== 1'bx)) begin
-            pt = pt_m[i]; key = key_m[i]; exp = ct_m[i];
-            iv256 = 1; @(posedge clk); iv256 = 0; repeat (14) begin @(posedge clk); end #1;
-            `CHK_EQ("enc256", ct256, exp);
-            i = i + 1;
-        end
-
+        repeat (2) @(posedge clk); #1;
+        rst = 0;
+        run_size(KS_128, "aes128_pt.mem", "aes128_key.mem", "aes128_ct.mem");
+        run_size(KS_192, "aes192_pt.mem", "aes192_key.mem", "aes192_ct.mem");
+        run_size(KS_256, "aes256_pt.mem", "aes256_key.mem", "aes256_ct.mem");
         `TB_SUMMARY("AES_ENCRYPT_TB");
     end
 endmodule
