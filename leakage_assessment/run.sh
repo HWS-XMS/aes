@@ -38,8 +38,8 @@ run_pair() {
 
 echo "== capture traces (${NT} per group) =="
 run_pair sim_enc        config_enc.yaml     unmasked
-run_pair sim_enc_ti_n2  config_enc_ti.yaml  ti_n2
-run_pair sim_enc_ti_n3  config_enc_ti.yaml  ti_n3
+run_pair sim_enc_masked_n2  config_enc_masked.yaml  masked_n2
+run_pair sim_enc_masked_n3  config_enc_masked.yaml  masked_n3
 
 echo
 echo "############### TVLA: UNMASKED AES-128 core (expect 1st-order LEAK) ###############"
@@ -47,9 +47,9 @@ python3 "$HERE/tvla.py" --fk "$BUILD/trace_unmasked_fk.h5" --rk "$BUILD/trace_un
     --group enc --series aes --active 10 10 --save "$BUILD/tvla_unmasked.png"
 echo
 echo "############### TVLA: MASKED N=2 core (expect 1st ok, 2nd LEAK) #################"
-python3 "$HERE/tvla.py" --fk "$BUILD/trace_ti_n2_fk.h5" --rk "$BUILD/trace_ti_n2_rk.h5" \
-    --group enc_ti --series aes --active 10 40 --save "$BUILD/tvla_ti_n2.png"
+python3 "$HERE/tvla.py" --fk "$BUILD/trace_masked_n2_fk.h5" --rk "$BUILD/trace_masked_n2_rk.h5" \
+    --group enc_masked --series aes --active 10 40 --save "$BUILD/tvla_masked_n2.png"
 echo
 echo "############### TVLA: MASKED N=3 core (expect 1st + 2nd ok) #####################"
-python3 "$HERE/tvla.py" --fk "$BUILD/trace_ti_n3_fk.h5" --rk "$BUILD/trace_ti_n3_rk.h5" \
-    --group enc_ti --series aes --active 10 40 --save "$BUILD/tvla_ti_n3.png"
+python3 "$HERE/tvla.py" --fk "$BUILD/trace_masked_n3_fk.h5" --rk "$BUILD/trace_masked_n3_rk.h5" \
+    --group enc_masked --series aes --active 10 40 --save "$BUILD/tvla_masked_n3.png"

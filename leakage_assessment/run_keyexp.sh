@@ -25,7 +25,7 @@ cd "$HERE"
 echo "== configure + build =="
 cmake -S "$HERE" -B "$BUILD" -DCMAKE_BUILD_TYPE=Release >/dev/null
 cmake --build "$BUILD" -j"$(($(nproc)/2))" \
-    --target sim_keyexp sim_keyexp_ti_n2 sim_keyexp_ti_n3
+    --target sim_keyexp sim_keyexp_masked_n2 sim_keyexp_masked_n3
 
 # the unmasked key schedule reads RCON.mem via $readmemh from the run dir
 cp -f "$HERE/../rtl/keyschedule/RCON.mem" "$BUILD/"
@@ -40,8 +40,8 @@ run_pair() {
 
 echo "== capture traces (${NT} per group) =="
 run_pair sim_keyexp        config_keyexp.yaml     keyexp_unmasked
-run_pair sim_keyexp_ti_n2  config_keyexp_ti.yaml  keyexp_ti_n2
-run_pair sim_keyexp_ti_n3  config_keyexp_ti.yaml  keyexp_ti_n3
+run_pair sim_keyexp_masked_n2  config_keyexp_masked.yaml  keyexp_masked_n2
+run_pair sim_keyexp_masked_n3  config_keyexp_masked.yaml  keyexp_masked_n3
 
 echo
 echo "########### TVLA: UNMASKED AES-128 key schedule (expect 1st-order LEAK) ###########"
@@ -49,9 +49,9 @@ python3 "$HERE/tvla.py" --fk "$BUILD/trace_keyexp_unmasked_fk.h5" --rk "$BUILD/t
     --group keyexp --series aes --active 10 11 --save "$BUILD/tvla_keyexp_unmasked.png"
 echo
 echo "########### TVLA: MASKED N=2 key schedule (expect 1st ok, 2nd LEAK) #############"
-python3 "$HERE/tvla.py" --fk "$BUILD/trace_keyexp_ti_n2_fk.h5" --rk "$BUILD/trace_keyexp_ti_n2_rk.h5" \
-    --group keyexp_ti --series aes --active 10 80 --save "$BUILD/tvla_keyexp_ti_n2.png"
+python3 "$HERE/tvla.py" --fk "$BUILD/trace_keyexp_masked_n2_fk.h5" --rk "$BUILD/trace_keyexp_masked_n2_rk.h5" \
+    --group keyexp_masked --series aes --active 10 80 --save "$BUILD/tvla_keyexp_masked_n2.png"
 echo
 echo "########### TVLA: MASKED N=3 key schedule (expect 1st + 2nd ok) #################"
-python3 "$HERE/tvla.py" --fk "$BUILD/trace_keyexp_ti_n3_fk.h5" --rk "$BUILD/trace_keyexp_ti_n3_rk.h5" \
-    --group keyexp_ti --series aes --active 10 80 --save "$BUILD/tvla_keyexp_ti_n3.png"
+python3 "$HERE/tvla.py" --fk "$BUILD/trace_keyexp_masked_n3_fk.h5" --rk "$BUILD/trace_keyexp_masked_n3_rk.h5" \
+    --group keyexp_masked --series aes --active 10 80 --save "$BUILD/tvla_keyexp_masked_n3.png"

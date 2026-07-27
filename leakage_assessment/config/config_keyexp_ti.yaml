@@ -1,8 +1,0 @@
-leakage_model:
-  - hamming_distance
-  - hamming_weight
-save_per_signal: false
-signals: auto
-scope: "TOP.tb_keyexp_ti_sca.dut"
-experiment: "keyexp_ti"
-series: "aes"

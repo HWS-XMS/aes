@@ -4,17 +4,17 @@
 #   make            - build reference vectors + run every testbench
 #   make core       - run test/core/*_TB.sv              (iverilog)
 #   make keyschedule- run test/keyschedule/*_TB.sv       (iverilog)
-#   make core_ti    - run test/core_ti/*_TB.sv           (verilator, masked)
-#   make keyschedule_ti - run test/keyschedule_ti/*_TB.sv(verilator, masked)
+#   make core_masked    - run test/core_masked/*_TB.sv           (verilator, masked)
+#   make keyschedule_masked - run test/keyschedule_masked/*_TB.sv(verilator, masked)
 #   make ref        - (re)generate reference vectors from OpenSSL + NIST data
-#   make <NAME>     - run a single testbench by module name (e.g. make SBOX_TI_TB)
+#   make <NAME>     - run a single testbench by module name (e.g. make SBOX_MASKED_TB)
 #   make clean
 #
 # Full-cipher TBs check against OpenSSL vectors; primitive TBs against NIST
 # FIPS-197 tables/vectors; masked TBs recombine shares and check the same
 # references.  No test checks against a hand-rolled model.
 #
-# The masked (_ti) tests use Verilator: they evaluate GF(2^8) functions millions
+# The masked (_masked) tests use Verilator: they evaluate GF(2^8) functions millions
 # of times per run, which is far too slow for the iverilog interpreter.
 # ============================================================================
 SHELL     := /bin/bash
@@ -30,13 +30,13 @@ CORE_PKG  := $(RTL)/core/AES_PKG.sv
 CORE_RTL  := $(CORE_PKG) $(filter-out $(CORE_PKG),$(wildcard $(RTL)/core/*.sv)) \
              $(wildcard $(RTL)/keyschedule/*.sv)
 
-TI_PKG    := $(wildcard $(RTL)/core_ti/AES_TI_PKG.sv)
-TI_RTL    := $(CORE_RTL) $(TI_PKG) \
-             $(filter-out $(TI_PKG),$(wildcard $(RTL)/core_ti/*.sv)) \
-             $(wildcard $(RTL)/keyschedule_ti/*.sv)
+MASKED_PKG    := $(wildcard $(RTL)/core_masked/AES_MASKED_PKG.sv)
+MASKED_RTL    := $(CORE_RTL) $(MASKED_PKG) \
+             $(filter-out $(MASKED_PKG),$(wildcard $(RTL)/core_masked/*.sv)) \
+             $(wildcard $(RTL)/keyschedule_masked/*.sv)
 
-.PHONY: all core keyschedule core_ti keyschedule_ti ref prep clean
-all: core keyschedule core_ti keyschedule_ti
+.PHONY: all core keyschedule core_masked keyschedule_masked ref prep clean
+all: core keyschedule core_masked keyschedule_masked
 
 ref:
 	@cd $(REF) && python3 gen_ref.py
@@ -87,24 +87,24 @@ keyschedule: prep
 	@echo "== test/keyschedule =="
 	$(call RUN_DIR,keyschedule,$(CORE_RTL))
 
-core_ti: prep
-	@echo "== test/core_ti (masked, verilator) =="
-	$(call VRUN_DIR,core_ti,$(TI_RTL))
+core_masked: prep
+	@echo "== test/core_masked (masked, verilator) =="
+	$(call VRUN_DIR,core_masked,$(MASKED_RTL))
 
-keyschedule_ti: prep
-	@echo "== test/keyschedule_ti (masked, verilator) =="
-	$(call VRUN_DIR,keyschedule_ti,$(TI_RTL))
+keyschedule_masked: prep
+	@echo "== test/keyschedule_masked (masked, verilator) =="
+	$(call VRUN_DIR,keyschedule_masked,$(MASKED_RTL))
 
-# Single test by module name: make SBOX_TI_TB
+# Single test by module name: make SBOX_MASKED_TB
 %_TB: prep
-	@tb=$$(find core keyschedule core_ti keyschedule_ti -name "$@.sv" 2>/dev/null | head -1); \
+	@tb=$$(find core keyschedule core_masked keyschedule_masked -name "$@.sv" 2>/dev/null | head -1); \
 	if [ -z "$$tb" ]; then echo "no such testbench: $@"; exit 1; fi; \
 	dir=$$(dirname $$tb); \
 	case $$dir in \
 	  core|keyschedule) \
 	    $(IVERILOG) -I. -o $(BUILD)/$@.vvp -s $@ $(CORE_RTL) $$tb && ( cd $(BUILD) && $(VVP) $@.vvp ) ;; \
 	  *) \
-	    $(VERILATOR) --Mdir $(BUILD)/v_$@ --top-module $@ $(TI_RTL) $$tb -o $@.exe >$(BUILD)/$@.clog 2>&1 \
+	    $(VERILATOR) --Mdir $(BUILD)/v_$@ --top-module $@ $(MASKED_RTL) $$tb -o $@.exe >$(BUILD)/$@.clog 2>&1 \
 	      && ( cd $(BUILD) && v_$@/$@.exe ) || { sed 's/^/    /' $(BUILD)/$@.clog; exit 1; } ;; \
 	esac
 
