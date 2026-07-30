@@ -24,9 +24,13 @@ file(GLOB RTL_REST
 list(REMOVE_ITEM RTL_REST ${RTL_PKG})
 set(RTL_SRC ${RTL_PKG} ${RTL_REST})
 
+# RTL lints clean under Verilator's default set (MULTIDRIVEN fixed in DOM_MUL; UNOPTFLAT
+# scoped on the key-schedule `col` feed-forward array).  The ONLY remaining suppressions
+# are the width classes, which fire solely on benign testbench stimulus (e.g. $random
+# truncated to a byte, a 128-bit key zero-extended into the 256-bit port) - never the RTL.
+# Everything else (LATCH, UNOPTFLAT, MULTIDRIVEN, ...) stays a hard error.
 set(VARGS --vpi --timing --public-flat-rw --output-split 2000 --output-split-cfuncs 2000
-    -Wno-UNUSEDSIGNAL -Wno-UNUSEDPARAM -Wno-UNOPTFLAT -Wno-WIDTHEXPAND
-    -Wno-WIDTHTRUNC -Wno-CASEINCOMPLETE -Wno-BLKANDNBLK -Wno-MULTIDRIVEN -Wno-WIDTHCONCAT)
+    -Wno-WIDTHTRUNC -Wno-WIDTHCONCAT -Wno-WIDTHEXPAND)
 
 # --- unmasked full AES-128 encryption core (baseline) ---
 add_executable(sim_enc tb/sim_main.cpp)

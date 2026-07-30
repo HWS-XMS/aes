@@ -34,7 +34,9 @@ module KEY_EXPANSION_192_MASKED #(
         endcase
     endfunction
 
+    /* verilator lint_off UNOPTFLAT */  // col[i] feeds forward from col[i-1..i-4]; not a real comb loop
     logic [N*32-1:0] col [0:NCOL-1];
+    /* verilator lint_on UNOPTFLAT */
 
     genvar c;
     genvar s;

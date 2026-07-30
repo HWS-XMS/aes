@@ -20,7 +20,7 @@
 SHELL     := /bin/bash
 IVERILOG  ?= iverilog -g2012 -gassertions
 VVP       ?= vvp
-VERILATOR ?= verilator --binary --timing --build-jobs 4 --output-split 2000 --output-split-cfuncs 2000 -CFLAGS -O0 -Wno-fatal -I.
+VERILATOR ?= verilator --binary --timing --build-jobs 4 --output-split 2000 --output-split-cfuncs 2000 -CFLAGS -O0 -Wno-WIDTHTRUNC -Wno-WIDTHCONCAT -Wno-WIDTHEXPAND -I.
 RTL       := ../rtl
 REF       := ref
 BUILD     := build

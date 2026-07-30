@@ -104,11 +104,15 @@ module AES_CORE (
             data_in_reg <= '0;
             data_out    <= '0;
         end else begin
-            state      <= state;
-            key_loaded <= key_loaded;
-            ke_kv      <= 1'b0;
-            enc_iv     <= 1'b0;
-            dec_iv     <= 1'b0;
+            state       <= state;
+            key_loaded  <= key_loaded;
+            keysize_reg <= keysize_reg;
+            key_reg     <= key_reg;
+            data_in_reg <= data_in_reg;
+            data_out    <= data_out;
+            ke_kv       <= 1'b0;
+            enc_iv      <= 1'b0;
+            dec_iv      <= 1'b0;
             case (state)
                 CS_IDLE: begin
                     if (update_key) begin
