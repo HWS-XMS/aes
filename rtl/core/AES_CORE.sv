@@ -94,11 +94,15 @@ module AES_CORE (
 
     always_ff @(posedge clk) begin
         if (rst) begin
-            state      <= CS_IDLE;
-            key_loaded <= 1'b0;
-            ke_kv      <= 1'b0;
-            enc_iv     <= 1'b0;
-            dec_iv     <= 1'b0;
+            state       <= CS_IDLE;
+            key_loaded  <= 1'b0;
+            ke_kv       <= 1'b0;
+            enc_iv      <= 1'b0;
+            dec_iv      <= 1'b0;
+            keysize_reg <= '0;
+            key_reg     <= '0;
+            data_in_reg <= '0;
+            data_out    <= '0;
         end else begin
             state      <= state;
             key_loaded <= key_loaded;

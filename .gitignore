@@ -22,6 +22,7 @@ test_outputs/
 
 # Build directories and simulation binaries / captured data
 build/
+build*/
 obj_dir/
 *.vvp
 *.exe
