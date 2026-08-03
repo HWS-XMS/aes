@@ -24,13 +24,14 @@ file(GLOB RTL_REST
 list(REMOVE_ITEM RTL_REST ${RTL_PKG})
 set(RTL_SRC ${RTL_PKG} ${RTL_REST})
 
-# RTL lints clean under Verilator's default set (MULTIDRIVEN fixed in DOM_MUL; UNOPTFLAT
-# scoped on the key-schedule `col` feed-forward array).  The ONLY remaining suppressions
-# are the width classes, which fire solely on benign testbench stimulus (e.g. $random
-# truncated to a byte, a 128-bit key zero-extended into the 256-bit port) - never the RTL.
-# Everything else (LATCH, UNOPTFLAT, MULTIDRIVEN, ...) stays a hard error.
+# Suppressions here are specific to this SCA build.  --public-flat-rw keeps signals
+# observable but disables the optimizations that let Verilator resolve the key-schedule
+# feed-forward `col` arrays, so it reports UNOPTFLAT false-positives (no real comb loop).
+# The width classes fire only on benign testbench stimulus ($random truncated to a byte,
+# a 128-bit key zero-extended into the 256-bit port), never the RTL.  MULTIDRIVEN was a
+# real smell (fixed in DOM_MUL); LATCH etc. stay hard errors.
 set(VARGS --vpi --timing --public-flat-rw --output-split 2000 --output-split-cfuncs 2000
-    -Wno-WIDTHTRUNC -Wno-WIDTHCONCAT -Wno-WIDTHEXPAND)
+    -Wno-UNOPTFLAT -Wno-WIDTHTRUNC -Wno-WIDTHCONCAT -Wno-WIDTHEXPAND)
 
 # --- unmasked full AES-128 encryption core (baseline) ---
 add_executable(sim_enc tb/sim_main.cpp)
@@ -39,6 +40,21 @@ target_compile_definitions(sim_enc PRIVATE
 verilate(sim_enc SOURCES ${RTL_SRC} tb/tb_enc_sca.sv
     TOP_MODULE tb_enc_sca PREFIX Vtb_enc_sca VERILATOR_ARGS ${VARGS})
 target_link_libraries(sim_enc PRIVATE sca)
+
+# --- SNR capture: unrolled vs rolled (iterative) unmasked encrypt datapaths ---
+add_executable(sim_enc_snr tb/sim_main.cpp)
+target_compile_definitions(sim_enc_snr PRIVATE
+    SIM_TOP_HEADER="Vtb_enc_snr.h" SIM_TOP_TYPE=Vtb_enc_snr)
+verilate(sim_enc_snr SOURCES ${RTL_SRC} tb/tb_enc_snr.sv
+    TOP_MODULE tb_enc_snr PREFIX Vtb_enc_snr VERILATOR_ARGS ${VARGS})
+target_link_libraries(sim_enc_snr PRIVATE sca)
+
+add_executable(sim_enc_iter_snr tb/sim_main.cpp)
+target_compile_definitions(sim_enc_iter_snr PRIVATE
+    SIM_TOP_HEADER="Vtb_enc_iter_snr.h" SIM_TOP_TYPE=Vtb_enc_iter_snr)
+verilate(sim_enc_iter_snr SOURCES ${RTL_SRC} tb/tb_enc_iter_snr.sv
+    TOP_MODULE tb_enc_iter_snr PREFIX Vtb_enc_iter_snr VERILATOR_ARGS ${VARGS})
+target_link_libraries(sim_enc_iter_snr PRIVATE sca)
 
 # --- masked full AES-128 encryption core, N shares (one target per N) ---
 foreach(NS 2 3)
